@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bloom For You 🌸</title>
+  
+  <!-- MediaPipe Hand Tracking Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #111827;
+      color: white;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    h1 {
+      margin: 10px 0 5px 0;
+      font-size: 1.8rem;
+    }
+
+    p {
+      margin: 0 0 15px 0;
+      color: #9ca3af;
+      font-size: 0.95rem;
+    }
+
+    .canvas-container {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+
+    video {
+      transform: scaleX(-1); /* Mirror webcam view */
+      display: none; /* Hide raw video stream */
+    }
+
+    canvas {
+      display: block;
+      transform: scaleX(-1); /* Mirror canvas to match natural movements */
+    }
+
+    /* Un-mirror text overlay on canvas */
+    #hud {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(4px);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Pinch & Open Your Hand 🌸</h1>
+  <p>Distance between your thumb and index finger blooms the flower</p>
+
+  <div class="canvas-container">
+    <div id="hud">Bloom: 0%</div>
+    <video id="webcam" playsinline></video>
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const hud = document.getElementById('hud');
+
+    let bloomFactor = 0;
+
+    // Helper to calculate 2D distance
+    function getDistance(p1, p2) {
+      const dx = (p1.x - p2.x) * canvasElement.width;
+      const dy = (p1.y - p2.y) * canvasElement.height;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // Custom Canvas Flower Drawing
+    function drawFlower(ctx, cx, cy, factor) {
+      const numPetals = 8;
+      const maxPetalLength = 70;
+      const petalLength = 15 + factor * maxPetalLength;
+      const petalWidth = 8 + factor * 30;
+
+      ctx.save();
+      // Stem
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx, cy + 140);
+      ctx.strokeStyle = '#2e7d32';
+      ctx.lineWidth = 8;
+      ctx.stroke();
+
+      // Petals
+      for (let i = 0; i < numPetals; i++) {
+        const angle = (i * (2 * Math.PI)) / numPetals;
+        const px = cx + (petalLength / 2 + 10) * Math.cos(angle);
+        const py = cy + (petalLength / 2 + 10) * Math.sin(angle);
+
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(angle);
+
+        ctx.beginPath();
+        ctx.ellipse(0, 0, petalLength / 2, petalWidth / 2, 0, 0, 2 * Math.PI);
+        // Soft pink to magenta gradient
+        ctx.fillStyle = `rgb(255, ${Math.floor(100 - factor * 50)}, ${Math.floor(180 + factor * 75)})`;
+        ctx.fill();
+        ctx.strokeStyle = '#c2185b';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // Center Core
+      const coreRadius = 10 + factor * 14;
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreRadius, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ffb300';
+      ctx.fill();
+      ctx.strokeStyle = '#f57c00';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // MediaPipe Hand Detection Callback
+    function onResults(results) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      // Draw the mirrored video frame onto canvas
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+
+        // Landmark 4 = Thumb Tip, Landmark 8 = Index Tip
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+
+        const dist = getDistance(thumbTip, indexTip);
+        
+        // Map distance (~20px to 220px) to range 0.0 - 1.0
+        const rawFactor = (dist - 20) / (200 - 20);
+        bloomFactor = Math.min(Math.max(rawFactor, 0), 1);
+      }
+
+      // Update UI percent readout
+      hud.innerText = `Bloom: ${Math.round(bloomFactor * 100)}%`;
+
+      // Draw the flower (positioned near the left side of canvas frame)
+      drawFlower(canvasCtx, 120, canvasElement.height - 150, bloomFactor);
+
+      canvasCtx.restore();
+    }
+
+    // Initialize MediaPipe Hands
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    hands.onResults(onResults);
+
+    // Initialize Camera Stream
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+
+    camera.start();
+  </script>
+</body>
+</html>
